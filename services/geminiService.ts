@@ -1,10 +1,14 @@
-
 import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { AnalysisResult } from "../types";
 import * as XLSX from "xlsx";
 
-// Fix for TypeScript error: "Cannot find name 'process'"
-declare var process: any;
+// Manually declare process for browser environment to satisfy TypeScript
+declare const process: {
+  env: {
+    API_KEY: string;
+    [key: string]: any;
+  }
+};
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
