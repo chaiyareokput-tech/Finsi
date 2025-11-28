@@ -6,15 +6,14 @@ import { AnalysisResult } from './types';
 
 const App: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [inputText, setInputText] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
 
   const handleAnalyze = async () => {
-    if (!selectedFile && !inputText.trim()) {
-      setError('กรุณาอัปโหลดไฟล์ภาพ หรือใส่ข้อมูลข้อความก่อนเริ่มการวิเคราะห์');
+    if (!selectedFile) {
+      setError('กรุณาอัปโหลดไฟล์ (Excel, PDF, CSV หรือ รูปภาพ) ก่อนเริ่มการวิเคราะห์');
       setUploadStatus('error');
       return;
     }
@@ -24,14 +23,15 @@ const App: React.FC = () => {
     setError(null);
 
     try {
-      const analysisData = await analyzeFinancialData(selectedFile, inputText.trim() || null);
+      // Pass null for text input as we only support file upload now
+      const analysisData = await analyzeFinancialData(selectedFile, null);
       
       setUploadStatus('success');
       // Delay slightly to show 100% progress before switching view
       setTimeout(() => {
         setResult(analysisData);
         setLoading(false);
-      }, 500);
+      }, 800);
 
     } catch (err) {
       setError((err as Error).message);
@@ -43,7 +43,6 @@ const App: React.FC = () => {
   const handleReset = () => {
     setResult(null);
     setSelectedFile(null);
-    setInputText('');
     setError(null);
     setUploadStatus('idle');
   };
@@ -91,15 +90,15 @@ const App: React.FC = () => {
                 ให้เป็นข้อมูลเชิงลึกที่ทรงพลัง
               </h2>
               <p className="mt-6 max-w-2xl mx-auto text-lg text-slate-500 leading-relaxed">
-                รองรับไฟล์ <span className="font-semibold text-slate-700">Excel, CSV, PDF และรูปภาพ</span> ระบบ AI จะวิเคราะห์สภาพคล่อง 
-                เจาะลึกรายบัญชี และค้นหาความผิดปกติ (Variance) แยกตามหน่วยงาน (BusA, BA, ไฟฟ้า) ให้อัตโนมัติ
+                อัปโหลดไฟล์ <span className="font-semibold text-slate-700">Excel, CSV, PDF หรือรูปภาพ</span> ของคุณ เพื่อให้ AI วิเคราะห์สภาพคล่อง 
+                เจาะลึกรายบัญชี และค้นหาความผิดปกติ (Variance) แยกตามหน่วยงาน (BusA, BA, ไฟฟ้า) ให้อัตโนมัติในไม่กี่วินาที
               </p>
             </div>
 
-            <div className="bg-white p-1 rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-100">
+            <div className="bg-white p-1 rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-100 relative">
+               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-t-2xl"></div>
                <FileUpload 
                 onFileSelect={setSelectedFile} 
-                onTextChange={setInputText}
                 uploadStatus={uploadStatus}
                 errorMessage={error || undefined}
               />
@@ -109,7 +108,7 @@ const App: React.FC = () => {
               <button
                 onClick={handleAnalyze}
                 disabled={loading}
-                className={`w-full sm:w-auto min-w-[200px] flex justify-center items-center py-4 px-8 border border-transparent rounded-xl shadow-lg shadow-indigo-200 text-lg font-bold text-white bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all transform hover:-translate-y-1 ${loading ? 'opacity-75 cursor-not-allowed transform-none' : ''}`}
+                className={`w-full sm:w-auto min-w-[240px] flex justify-center items-center py-4 px-8 border border-transparent rounded-xl shadow-lg shadow-indigo-200 text-lg font-bold text-white bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all transform hover:-translate-y-1 ${loading ? 'opacity-75 cursor-not-allowed transform-none' : ''}`}
               >
                 {loading ? (
                   <>
@@ -117,17 +116,21 @@ const App: React.FC = () => {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    กำลังประมวลผลข้อมูล...
+                    ระบบกำลังวิเคราะห์ข้อมูล...
                   </>
                 ) : (
                   <>
-                    เริ่มการวิเคราะห์ทันที
+                    เริ่มการวิเคราะห์ (Analyze)
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 ml-2" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
                     </svg>
                   </>
                 )}
               </button>
+            </div>
+            
+            <div className="text-center text-xs text-slate-400 mt-4">
+                ปลอดภัย 100% ข้อมูลของคุณจะถูกประมวลผลและลบทันทีหลังการวิเคราะห์
             </div>
           </div>
         ) : (

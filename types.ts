@@ -1,3 +1,4 @@
+
 export interface FinancialItem {
   name: string;
   amount: number;
@@ -6,6 +7,7 @@ export interface FinancialItem {
   type: 'revenue' | 'expense' | 'asset' | 'liability';
   unit: string; // เช่น 'Overall', 'Electricity', 'BusA'
   insight: string; // คำอธิบายสั้นๆ
+  riskLevel?: 'High' | 'Medium' | 'Low';
 }
 
 export interface KeyRatio {
@@ -42,4 +44,4 @@ export interface AnalysisResult {
 
 export type ViewMode = 'dashboard' | 'report';
 export type ChartType = 'bar' | 'pie' | 'line';
-export type UnitFilter = 'All' | 'Electricity' | 'BusA' | string;
+export type UnitFilter = 'All' | 'Electricity' | 'BusA' | 'กฟส.' | 'H' | string;

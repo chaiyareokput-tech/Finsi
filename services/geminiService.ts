@@ -1,6 +1,10 @@
-import { GoogleGenAI, Type } from "@google/genai";
+
+import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { AnalysisResult } from "../types";
 import * as XLSX from "xlsx";
+
+// Fix for TypeScript error: "Cannot find name 'process'"
+declare var process: any;
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -21,7 +25,7 @@ const analysisSchema = {
     },
     financialItems: {
       type: Type.ARRAY,
-      description: "รายการบัญชีทั้งหมด แยกตามบรรทัดที่ปรากฏในงบ",
+      description: "รายการบัญชีที่สำคัญและรายการที่มีการเปลี่ยนแปลงสูง (Top items and significant variances). LIMIT TO TOP 40 ITEMS ONLY.",
       items: {
         type: Type.OBJECT,
         properties: {
@@ -30,10 +34,11 @@ const analysisSchema = {
           previousAmount: { type: Type.NUMBER, description: "ยอดปีก่อนหน้า (ถ้ามี)" },
           percentageChange: { type: Type.NUMBER, description: "% การเปลี่ยนแปลง (ถ้ามี)" },
           type: { type: Type.STRING, enum: ['revenue', 'expense', 'asset', 'liability'] },
-          unit: { type: Type.STRING, description: "หน่วยงานเจ้าของยอดนี้ เช่น 'Electricity', 'BusA', 'BA', 'Central' หรือ 'Overall'" },
-          insight: { type: Type.STRING, description: "สาเหตุหรือข้อสังเกตสั้นๆ สำหรับรายการนี้" }
+          unit: { type: Type.STRING, description: "หน่วยงานเจ้าของยอดนี้ เช่น 'กฟส.', 'H', 'Electricity', 'BusA', 'BA' หรือ 'Overall'" },
+          insight: { type: Type.STRING, description: "สาเหตุหรือข้อสังเกตสั้นๆ" },
+          riskLevel: { type: Type.STRING, enum: ['High', 'Medium', 'Low'], description: "ระดับความเสี่ยง" }
         },
-        required: ["name", "amount", "type", "unit", "insight"]
+        required: ["name", "amount", "type", "unit", "insight", "riskLevel"]
       }
     },
     keyRatios: {
@@ -63,7 +68,7 @@ const analysisSchema = {
       }
     },
     summary: { type: Type.STRING },
-    detailedReport: { type: Type.STRING, description: "บทวิเคราะห์เชิงลึกแบบบรรยาย (Markdown) ให้วิเคราะห์เจาะลึกรายการที่เพิ่ม/ลด ผิดปกติ" },
+    detailedReport: { type: Type.STRING, description: "บทวิเคราะห์เชิงลึกแบบบรรยาย (Markdown)" },
     recommendations: {
       type: Type.ARRAY,
       items: { type: Type.STRING }
@@ -131,28 +136,33 @@ export const analyzeFinancialData = async (
     คุณคือผู้เชี่ยวชาญด้านการวิเคราะห์งบการเงินระดับสูง (Senior Financial Analyst AI)
     
     ภารกิจ:
-    1. วิเคราะห์ข้อมูลการเงินที่ได้รับ (รองรับทั้งไฟล์ภาพ, PDF, Excel, CSV)
-    2. **การแยกหน่วยงาน (Unit Separation):** ให้พยายามแยกแยะข้อมูลตามหน่วยงานอย่างละเอียด เช่น:
-       - การไฟฟ้า (Electricity)
-       - เดินรถ/ขนส่ง (BusA / BA / Transportation)
-       - ส่วนกลาง (Central / Overall)
-       หากไม่ระบุชัดเจนให้ใช้ 'Overall'
-    3. **การจัดประเภทบัญชี:** ระบุประเภทให้ถูกต้อง (Revenue, Expense, Asset, Liability)
-    4. **Significant Variance Analysis:** คำนวณหา % การเปลี่ยนแปลง (Year-over-Year) และให้ Insight ว่าทำไมรายการนี้ถึงสำคัญ
-    5. วิเคราะห์สภาพคล่อง (Liquidity) และ อัตราส่วนทางการเงิน (Ratios)
-    6. พยากรณ์แนวโน้ม (Trend)
+    1. วิเคราะห์ข้อมูลการเงินที่ได้รับ
+    2. **การแยกหน่วยงาน (Unit Separation):** แยกแยะข้อมูลตามหน่วยงาน (กฟส., H, Electricity, BusA/BA)
+    3. **การจัดประเภทบัญชี:** ระบุประเภท (Revenue, Expense, Asset, Liability)
+    4. **Significant Variance:** หา % การเปลี่ยนแปลงและ Insight
+    5. **Risk Assessment:** ประเมินความเสี่ยง (High/Medium/Low)
+    6. **IMPORTANT - JSON LIMITATION:** 
+       - ใน field 'financialItems' ให้ส่งคืนเฉพาะ **รายการที่มีนัยสำคัญสูงสุด 40 อันดับแรก** (Top 40 significant items) เท่านั้น เพื่อป้องกัน JSON ถูกตัดจบ
+       - ไม่ต้องแสดงรายการย่อยที่ยอดเงินน้อยหรือไม่มีนัยสำคัญ
+       - 'insight' ต้องสั้นกระชับ (1 ประโยค)
     
-    Output: JSON ตาม Schema
-    Language: ภาษาไทย (ทางการ, ศัพท์บัญชีที่ถูกต้อง)
+    Output: JSON ตาม Schema เท่านั้น ห้ามมี Markdown Code Block ครอบ
+    Language: ภาษาไทย
   `;
 
   const parts: any[] = [{ text: prompt }];
 
   if (file) {
     const fileType = file.type;
+    const fileName = file.name.toLowerCase();
     
-    if (fileType === 'application/pdf') {
-       // รองรับ PDF
+    // Robust file type detection
+    const isPdf = fileType === 'application/pdf' || fileName.endsWith('.pdf');
+    const isImage = fileType.includes('image') || /\.(jpg|jpeg|png|webp|heic)$/i.test(fileName);
+    const isExcel = fileType.includes('sheet') || fileType.includes('excel') || /\.(xlsx|xls)$/i.test(fileName);
+    const isCsv = fileType.includes('csv') || /\.(csv|txt)$/i.test(fileName);
+
+    if (isPdf) {
        const base64Data = await fileToBase64(file);
        parts.push({
          inlineData: {
@@ -160,36 +170,35 @@ export const analyzeFinancialData = async (
            data: base64Data
          }
        });
-    } else if (fileType.includes('image')) {
-       // รองรับ Image
+    } else if (isImage) {
        const base64Data = await fileToBase64(file);
+       let mimeType = fileType;
+       if (!mimeType) {
+         if (fileName.endsWith('.png')) mimeType = 'image/png';
+         else mimeType = 'image/jpeg';
+       }
        parts.push({
          inlineData: {
-           mimeType: fileType, // 'image/jpeg', 'image/png'
+           mimeType: mimeType,
            data: base64Data
          }
        });
-    } else if (fileType.includes('sheet') || fileType.includes('excel')) {
-       // รองรับ Excel -> แปลงเป็น Text CSV ส่งให้ AI
+    } else if (isExcel) {
        const csvData = await parseExcel(file);
-       parts.push({ text: `ข้อมูลจากไฟล์ Excel (แปลงเป็น CSV): \n${csvData}` });
-    } else if (fileType.includes('csv') || fileType.includes('text')) {
-       // รองรับ CSV/Text
+       const truncatedCsv = csvData.length > 50000 ? csvData.substring(0, 50000) + "\n...(ข้อมูลถูกตัดทอน)..." : csvData;
+       parts.push({ text: `ข้อมูลจากไฟล์ Excel (แปลงเป็น CSV): \n${truncatedCsv}` });
+    } else if (isCsv) {
        const txtData = await parseTextFile(file);
-       parts.push({ text: `ข้อมูลจากไฟล์: \n${txtData}` });
+       const truncatedTxt = txtData.length > 50000 ? txtData.substring(0, 50000) + "\n...(ข้อมูลถูกตัดทอน)..." : txtData;
+       parts.push({ text: `ข้อมูลจากไฟล์: \n${truncatedTxt}` });
     } else {
-       // Fallback ลองอ่านเป็น text
        try {
          const txtData = await parseTextFile(file);
          parts.push({ text: `ข้อมูลไฟล์: \n${txtData}` });
        } catch (e) {
-         throw new Error("ไม่รองรับประเภทไฟล์นี้");
+         throw new Error("ไม่รองรับประเภทไฟล์นี้ กรุณาอัปโหลด PDF, Excel, CSV หรือรูปภาพ");
        }
     }
-  }
-
-  if (textData) {
-    parts.push({ text: `ข้อมูลเพิ่มเติม (User Input): ${textData}` });
   }
 
   try {
@@ -202,17 +211,42 @@ export const analyzeFinancialData = async (
       config: {
         responseMimeType: "application/json",
         responseSchema: analysisSchema,
-        temperature: 0.2, 
+        temperature: 0.2,
+        maxOutputTokens: 8192,
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ],
       }
     });
 
-    const resultText = response.text;
-    if (!resultText) throw new Error("No response from AI");
+    let resultText = response.text;
+    
+    if (!resultText) {
+      const candidate = response.candidates?.[0];
+      const finishReason = candidate?.finishReason;
+      if (finishReason === 'SAFETY') throw new Error("ติด Safety Block - โปรดตรวจสอบเนื้อหาไฟล์");
+      throw new Error(`AI ไม่ตอบกลับ (Reason: ${finishReason || 'Unknown'})`);
+    }
 
-    return JSON.parse(resultText) as AnalysisResult;
+    // Clean Markdown Code Blocks
+    resultText = resultText.replace(/^```json\s*/, "").replace(/\s*```$/, "").trim();
+
+    try {
+      return JSON.parse(resultText) as AnalysisResult;
+    } catch (parseError) {
+      console.error("JSON Parse Error Raw:", resultText);
+      throw new Error(`เกิดข้อผิดพลาดในการอ่านผลลัพธ์ (JSON Syntax): ${parseError}. ข้อมูลอาจถูกตัดจบเนื่องจากมีรายการเยอะเกินไป`);
+    }
 
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
-    throw new Error("เกิดข้อผิดพลาดในการวิเคราะห์: " + (error as Error).message);
+    let errorMsg = (error as Error).message;
+    if (errorMsg.includes("JSON") || errorMsg.includes("position")) {
+        errorMsg = "ข้อมูลมีขนาดใหญ่เกินไป ทำให้ผลลัพธ์ไม่สมบูรณ์ กรุณาลดจำนวนรายการในไฟล์ หรือลองใหม่อีกครั้ง";
+    }
+    throw new Error(errorMsg);
   }
 };
