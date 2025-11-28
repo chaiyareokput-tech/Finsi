@@ -1,0 +1,414 @@
+import React, { useState, useMemo } from 'react';
+import { AnalysisResult, ViewMode, ChartType, UnitFilter } from '../types';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell,
+  PieChart, Pie, LineChart, Line, AreaChart, Area
+} from 'recharts';
+
+interface DashboardProps {
+  data: AnalysisResult;
+  onReset: () => void;
+}
+
+const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+
+const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
+  const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
+  const [selectedUnit, setSelectedUnit] = useState<UnitFilter>('All');
+  const [selectedType, setSelectedType] = useState<string>('All');
+  const [chartType, setChartType] = useState<ChartType>('bar');
+
+  const { liquidity, financialItems, summary, recommendations, futureTrends, keyRatios, detailedReport } = data;
+
+  // Extract unique units for filter
+  const units = useMemo(() => {
+    const allUnits = financialItems.map(item => item.unit || 'Overall');
+    return ['All', ...Array.from(new Set(allUnits))];
+  }, [financialItems]);
+
+  // Account types for filter
+  const accountTypes = [
+    { id: 'All', label: 'ทั้งหมด' },
+    { id: 'revenue', label: 'รายได้' },
+    { id: 'expense', label: 'ค่าใช้จ่าย' },
+    { id: 'asset', label: 'สินทรัพย์' },
+    { id: 'liability', label: 'หนี้สิน' },
+  ];
+
+  // Filter logic
+  const filteredItems = useMemo(() => {
+    return financialItems.filter(item => {
+      const matchUnit = selectedUnit === 'All' || (item.unit || 'Overall') === selectedUnit;
+      const matchType = selectedType === 'All' || item.type === selectedType;
+      return matchUnit && matchType;
+    });
+  }, [financialItems, selectedUnit, selectedType]);
+
+  // Significant Variance Items (Top Movers)
+  const significantItems = useMemo(() => {
+    return financialItems
+      .filter(item => item.percentageChange && Math.abs(item.percentageChange) > 5) // เปลี่ยนแปลงมากกว่า 5%
+      .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)) // เรียงตามยอดเงินที่มีผลกระทบ
+      .slice(0, 5);
+  }, [financialItems]);
+
+  // Chart Data Preparation
+  const chartData = useMemo(() => {
+    return [...filteredItems]
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 10) // Top 10 items
+      .map(item => ({
+        ...item,
+        shortName: item.name.length > 15 ? item.name.substring(0, 15) + '...' : item.name
+      }));
+  }, [filteredItems]);
+
+  const formatNumber = (num: number) => new Intl.NumberFormat('th-TH', { maximumFractionDigits: 0 }).format(num);
+  const formatCompact = (num: number) => new Intl.NumberFormat('th-TH', { notation: "compact", compactDisplay: "short" }).format(num);
+
+  const renderChart = () => {
+    if (chartData.length === 0) return <div className="flex items-center justify-center h-64 text-slate-400 bg-slate-50 rounded-lg">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</div>;
+
+    const CommonTooltip = () => (
+      <RechartsTooltip 
+        formatter={(value: number) => [formatNumber(value), 'จำนวนเงิน (บาท)']}
+        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+      />
+    );
+
+    switch (chartType) {
+      case 'pie':
+        return (
+          <ResponsiveContainer width="100%" height={350}>
+            <PieChart>
+              <Pie
+                data={chartData}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={100}
+                paddingAngle={5}
+                dataKey="amount"
+                nameKey="name"
+              >
+                {chartData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <CommonTooltip />
+              <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{fontSize: '12px', right: 0}}/>
+            </PieChart>
+          </ResponsiveContainer>
+        );
+      case 'line':
+         return (
+          <ResponsiveContainer width="100%" height={350}>
+            <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey="shortName" tick={{fontSize: 12}} angle={-45} textAnchor="end" height={60}/>
+              <YAxis tick={{fontSize: 12}} tickFormatter={formatCompact} />
+              <CommonTooltip />
+              <Area type="monotone" dataKey="amount" stroke="#6366f1" fillOpacity={1} fill="url(#colorAmount)" />
+            </AreaChart>
+          </ResponsiveContainer>
+         );
+      case 'bar':
+      default:
+        return (
+          <ResponsiveContainer width="100%" height={350}>
+            <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#e2e8f0" />
+              <XAxis type="number" tickFormatter={formatCompact} />
+              <YAxis dataKey="shortName" type="category" width={120} tick={{fontSize: 12}} />
+              <CommonTooltip />
+              <Bar dataKey="amount" radius={[0, 4, 4, 0]}>
+                {chartData.map((entry, index) => (
+                   <Cell key={`cell-${index}`} fill={entry.type.includes('expense') || entry.type.includes('liability') ? '#ef4444' : '#10b981'} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        );
+    }
+  };
+
+  const renderContent = () => {
+    if (viewMode === 'report') {
+      return (
+        <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-100 animate-fade-in max-w-5xl mx-auto">
+           <div className="prose prose-slate max-w-none">
+             <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-100">
+               <div className="bg-indigo-100 p-2 rounded-lg">
+                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+               </div>
+               <h2 className="text-2xl font-bold text-slate-800 m-0">รายงานวิเคราะห์งบการเงินฉบับสมบูรณ์</h2>
+             </div>
+             
+             <div className="bg-gradient-to-br from-indigo-50 to-slate-50 p-6 rounded-xl mb-8 border border-indigo-100">
+               <h3 className="text-lg font-bold text-indigo-900 mt-0 mb-3 flex items-center gap-2">
+                 <span className="w-1 h-6 bg-indigo-500 rounded-full"></span>
+                 บทสรุปผู้บริหาร (Executive Summary)
+               </h3>
+               <p className="text-slate-700 leading-relaxed">{summary}</p>
+             </div>
+
+             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-10">
+               <div className="lg:col-span-2">
+                 <h3 className="text-xl font-bold text-slate-800 mb-4">รายละเอียดการวิเคราะห์</h3>
+                 <div className="whitespace-pre-line text-slate-600 leading-relaxed text-justify">
+                   {detailedReport}
+                 </div>
+               </div>
+               <div className="space-y-6">
+                 <div>
+                   <h3 className="text-lg font-bold text-slate-800 mb-3">แนวโน้มในอนาคต</h3>
+                   <div className="space-y-3">
+                      {futureTrends.map((trend, idx) => (
+                        <div key={idx} className={`p-4 rounded-xl border-l-4 shadow-sm ${trend.impact === 'Positive' ? 'bg-green-50 border-green-400' : trend.impact === 'Negative' ? 'bg-red-50 border-red-400' : 'bg-slate-50 border-slate-300'}`}>
+                          <h4 className="font-bold text-slate-800 text-sm">{trend.topic}</h4>
+                          <p className="text-xs mt-1 text-slate-600">{trend.prediction}</p>
+                        </div>
+                      ))}
+                   </div>
+                 </div>
+               </div>
+             </div>
+
+             <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+               ข้อเสนอแนะเชิงกลยุทธ์
+             </h3>
+             <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+               {recommendations.map((rec, idx) => (
+                 <li key={idx} className="flex items-start gap-3 bg-white p-3 rounded-lg border border-slate-100 shadow-sm">
+                   <span className="flex-shrink-0 w-6 h-6 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-xs font-bold mt-0.5">{idx + 1}</span>
+                   <span className="text-slate-700 text-sm">{rec}</span>
+                 </li>
+               ))}
+             </ul>
+           </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6 animate-fade-in">
+        {/* Top KPIs Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+            <p className="text-xs text-slate-500 font-bold uppercase tracking-wider relative z-10">สภาพคล่อง (Current Ratio)</p>
+            <div className="flex items-end gap-2 mt-2 relative z-10">
+              <span className="text-3xl font-bold text-slate-800">{liquidity.currentRatio?.toFixed(2) || '-'}</span>
+              <span className="text-xs text-slate-400 mb-1">เท่า</span>
+            </div>
+            <div className={`mt-3 inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium relative z-10 ${liquidity.status === 'Healthy' ? 'bg-green-100 text-green-700' : liquidity.status === 'Caution' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+              {liquidity.statusLabel}
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+            <p className="text-xs text-slate-500 font-bold uppercase tracking-wider relative z-10">Quick Ratio</p>
+            <div className="flex items-end gap-2 mt-2 relative z-10">
+              <span className="text-3xl font-bold text-slate-800">{liquidity.quickRatio?.toFixed(2) || '-'}</span>
+              <span className="text-xs text-slate-400 mb-1">เท่า</span>
+            </div>
+             <p className="text-xs text-slate-400 mt-3 relative z-10 truncate">{liquidity.description}</p>
+          </div>
+
+          {/* Significant Variance Widget */}
+          <div className="md:col-span-2 bg-gradient-to-r from-indigo-600 to-violet-600 p-5 rounded-2xl shadow-md text-white flex flex-col justify-between relative overflow-hidden">
+             <div className="absolute top-0 right-0 -mt-10 -mr-10 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl"></div>
+             <div className="relative z-10">
+               <h3 className="font-bold text-lg flex items-center gap-2">
+                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-yellow-300" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+                 Significant Variance Analysis
+               </h3>
+               <p className="text-indigo-100 text-sm mt-1 mb-3">รายการที่มีความผิดปกติหรือเปลี่ยนแปลงสูง</p>
+               
+               <div className="space-y-2">
+                 {significantItems.length > 0 ? significantItems.slice(0,2).map((item, idx) => (
+                   <div key={idx} className="bg-white/10 backdrop-blur-sm rounded-lg p-2 flex justify-between items-center text-sm">
+                      <span className="truncate flex-1 pr-2">{item.name} ({item.unit})</span>
+                      <div className="flex items-center gap-3">
+                         <span className="font-mono">{formatCompact(item.amount)}</span>
+                         <span className={`px-1.5 rounded text-xs font-bold ${item.percentageChange && item.percentageChange > 0 ? 'bg-red-500/80' : 'bg-green-500/80'}`}>
+                           {item.percentageChange && item.percentageChange > 0 ? '+' : ''}{item.percentageChange}%
+                         </span>
+                      </div>
+                   </div>
+                 )) : <p className="text-white/70 text-sm">ไม่พบความผิดปกติที่มีนัยสำคัญ</p>}
+               </div>
+             </div>
+          </div>
+        </div>
+
+        {/* Filter Bar */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 items-center justify-between sticky top-20 z-10">
+           <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
+              {/* Unit Filter */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
+                 <span className="text-xs font-bold text-slate-400 uppercase mr-1">หน่วยงาน:</span>
+                 {units.map(unit => (
+                   <button
+                     key={unit}
+                     onClick={() => setSelectedUnit(unit)}
+                     className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${selectedUnit === unit ? 'bg-indigo-600 text-white shadow-md ring-2 ring-indigo-200' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                   >
+                     {unit === 'All' ? 'ทั้งหมด' : unit}
+                   </button>
+                 ))}
+              </div>
+           </div>
+
+           <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto justify-start md:justify-end pb-1 sm:pb-0 no-scrollbar">
+                 <span className="text-xs font-bold text-slate-400 uppercase mr-1">บัญชี:</span>
+                 {accountTypes.map(type => (
+                   <button
+                     key={type.id}
+                     onClick={() => setSelectedType(type.id)}
+                     className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${selectedType === type.id ? 'bg-slate-800 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                   >
+                     {type.label}
+                   </button>
+                 ))}
+           </div>
+        </div>
+
+        {/* Main Chart Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+             <div className="flex flex-wrap justify-between items-center mb-6">
+               <div>
+                  <h3 className="text-lg font-bold text-slate-800">กราฟแสดงข้อมูลทางการเงิน</h3>
+                  <p className="text-xs text-slate-500">แสดงข้อมูล Top 10 ตามเงื่อนไขการกรอง</p>
+               </div>
+               <div className="flex bg-slate-100 rounded-lg p-1 mt-2 sm:mt-0">
+                 <button onClick={() => setChartType('bar')} className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${chartType === 'bar' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg> Bar
+                 </button>
+                 <button onClick={() => setChartType('pie')} className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${chartType === 'pie' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" /></svg> Pie
+                 </button>
+                 <button onClick={() => setChartType('line')} className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${chartType === 'line' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg> Trend
+                 </button>
+               </div>
+             </div>
+             
+             <div className="w-full">
+               {renderChart()}
+             </div>
+          </div>
+
+          <div className="bg-white p-0 rounded-2xl shadow-sm border border-slate-100 lg:col-span-1 flex flex-col h-[450px]">
+            <div className="p-4 border-b border-slate-100 bg-slate-50/50 rounded-t-2xl">
+              <h3 className="text-lg font-bold text-slate-800">เจาะลึกรายบัญชี</h3>
+              <p className="text-xs text-slate-500">
+                {filteredItems.length} รายการ | รวม: {formatCompact(filteredItems.reduce((acc, i) => acc + i.amount, 0))} บาท
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+              {filteredItems.length > 0 ? filteredItems.map((item, idx) => (
+                <div key={idx} className="group bg-white border border-slate-100 hover:border-indigo-200 p-3 rounded-xl transition-all hover:shadow-sm">
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="font-semibold text-slate-700 text-sm line-clamp-1" title={item.name}>{item.name}</span>
+                    <span className={`text-sm font-bold whitespace-nowrap ${item.type.includes('expense') ? 'text-red-600' : 'text-emerald-600'}`}>
+                      {formatCompact(item.amount)}
+                    </span>
+                  </div>
+                  
+                  <div className="flex justify-between items-center text-xs text-slate-500 mb-2">
+                     <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] text-slate-500 border border-slate-200">{item.unit || 'N/A'}</span>
+                     {item.percentageChange && (
+                        <span className={`flex items-center ${item.percentageChange > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
+                           {item.percentageChange > 0 ? '↑' : '↓'} {Math.abs(item.percentageChange)}% YoY
+                        </span>
+                     )}
+                  </div>
+                  
+                  {item.insight && (
+                    <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 group-hover:bg-white group-hover:border-indigo-100 transition-colors">
+                      💡 {item.insight}
+                    </div>
+                  )}
+                </div>
+              )) : (
+                 <div className="text-center py-10 text-slate-400">
+                   <p>ไม่พบรายการที่ตรงกับเงื่อนไข</p>
+                 </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Key Ratios Grid */}
+        <div>
+           <h3 className="text-lg font-bold text-slate-800 mb-4 px-2 border-l-4 border-indigo-500">อัตราส่วนทางการเงินที่สำคัญ (Key Financial Ratios)</h3>
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {keyRatios.map((ratio, idx) => (
+              <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
+                <div className="flex justify-between items-start mb-3">
+                  <div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
+                     <span className="text-xs font-bold"># {idx+1}</span>
+                  </div>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wide ${ratio.evaluation === 'Good' ? 'bg-emerald-100 text-emerald-700' : ratio.evaluation === 'Poor' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {ratio.evaluation}
+                  </span>
+                </div>
+                <h4 className="font-semibold text-slate-700 text-sm mb-1">{ratio.name}</h4>
+                <p className="text-2xl font-bold text-slate-800 mb-2">{ratio.value} <span className="text-xs font-normal text-slate-400">{ratio.unit}</span></p>
+                <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">{ratio.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      {/* Navigation Tabs */}
+      <div className="flex justify-between items-center mb-8 bg-white p-2 rounded-xl shadow-sm border border-slate-100 sticky top-0 z-20 mx-4 md:mx-0">
+         <div className="flex bg-slate-100 p-1 rounded-lg">
+           <button 
+             onClick={() => setViewMode('dashboard')}
+             className={`px-6 py-2 rounded-md text-sm font-bold transition-all flex items-center gap-2 ${viewMode === 'dashboard' ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+           >
+             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" /></svg>
+             Dashboard
+           </button>
+           <button 
+             onClick={() => setViewMode('report')}
+             className={`px-6 py-2 rounded-md text-sm font-bold transition-all flex items-center gap-2 ${viewMode === 'report' ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+           >
+             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+             Full Analysis Report
+           </button>
+         </div>
+
+         <button 
+            onClick={onReset}
+            className="flex items-center px-4 py-2 border border-slate-200 shadow-sm text-sm font-medium rounded-lg text-slate-600 bg-white hover:bg-slate-50 hover:text-indigo-600 transition-colors focus:outline-none"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span className="hidden sm:inline">วิเคราะห์ใหม่</span>
+          </button>
+      </div>
+
+      {renderContent()}
+    </div>
+  );
+};
+
+export default Dashboard;
